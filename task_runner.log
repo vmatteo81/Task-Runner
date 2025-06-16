@@ -1,0 +1,5 @@
+2025-06-16 12:35:53,379 - [SCHEDULED] Would run: cmd /c "C:/Users/Matteo/private-repo/youtube_trends/startx.bat"
+2025-06-16 12:36:00,408 - [SCHEDULED] Would run: cmd /c "C:/Users/Matteo/private-repo/youtube_trends/startx.bat"
+2025-06-16 14:17:27,669 - [SCHEDULED] Would run: cmd /c "C:/Users/Matteo/private-repo/youtube_trends/startx.bat"
+2025-06-16 14:30:00,980 - [SCHEDULED] Would run: cmd /c "C:/Users/Matteo/private-repo/youtube_trends/startx.bat"
+2025-06-16 14:31:30,679 - [SCHEDULED] Error running task C:/Users/Matteo/private-repo/youtube_trends/startx.bat: 'charmap' codec can't decode byte 0x8f in position 10457: character maps to <undefined>
