@@ -1,1 +1,1 @@
-[{"name": "JustKidsTv", "file_path": "C:/Users/Matteo/private-repo/youtube_trends/startx.bat", "cron_expr": "*/30 * * * *", "retention": 5, "status": "Active", "next_run": "2025-06-16 16:30:00", "last_execution": "2025-06-16 16:00:20"}]
+[{"name": "JustKidsTv", "file_path": "C:/Users/Matteo/private-repo/youtube_trends/startx.bat", "cron_expr": "*/30 * * * *", "retention": 5, "status": "Active", "next_run": "2025-06-16 17:30:00", "last_execution": "2025-06-16 17:00:20"}]
