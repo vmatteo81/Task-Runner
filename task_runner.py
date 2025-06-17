@@ -52,6 +52,8 @@ class TaskRunner:
         self.set_theme()
         self.setup_logging()
         self.tasks = self.load_tasks()
+        # Add a lock to prevent overlapping runs
+        self.job_running_lock = threading.Lock()
         # Recalculate next_run for all tasks if missing or invalid
         for task in self.tasks:
             if not task.get('next_run') or task.get('next_run') in (None, '-', ''):
@@ -318,6 +320,10 @@ class TaskRunner:
 
     def run_scheduler(self):
         while True:
+            # Skip if a job is running
+            if self.job_running_lock.locked():
+                time.sleep(1)
+                continue
             now = datetime.now()
             updated = False
             for task in self.tasks:
@@ -349,7 +355,17 @@ class TaskRunner:
 
     def _run_scheduled_task(self, task):
         def task_thread():
+            if not self.job_running_lock.acquire(blocking=False):
+                print(f"[TaskRunner] [SCHEDULED] Skipping: Another job is running.")
+                return
             try:
+                # Store original working directory
+                original_dir = os.getcwd()
+                # Get the directory of the task file
+                task_dir = os.path.dirname(os.path.abspath(task['file_path']))
+                # Change to that directory
+                os.chdir(task_dir)
+                
                 ext = os.path.splitext(task['file_path'])[1].lower()
                 if ext in ['.bat', '.cmd']:
                     cmd = f'cmd /c "{task["file_path"]}"'
@@ -360,22 +376,35 @@ class TaskRunner:
                 print(f"[TaskRunner] [SCHEDULED] Would run: {cmd}")
                 logging.info(f"[SCHEDULED] Would run: {cmd}")
                 # Run and capture output
-                import subprocess
                 start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
                 output, _ = proc.communicate()
-                log_block = f"==== EXECUTION {start_time} ====" + "\n" + output + "\n"
+                # Restore original working directory before writing log
+                os.chdir(original_dir)
+                # Log block with task name and file path
+                log_block = (
+                    f"==== EXECUTION {start_time} ====" + "\n"
+                    f"Task: {task.get('name', '')}\n"
+                    f"File: {task.get('file_path', '')}\n\n"
+                    + output + "\n"
+                )
                 self._append_and_trim_log(task, log_block)
                 logging.info(f"[SCHEDULED] Task completed: {task['file_path']}")
                 print(f"[TaskRunner] [SCHEDULED] Completed: {task['file_path']}")
             except Exception as e:
+                try:
+                    os.chdir(original_dir)
+                except:
+                    pass
                 logging.error(f"[SCHEDULED] Error running task {task['file_path']}: {str(e)}")
                 print(f"[TaskRunner] [SCHEDULED] Error: {e}")
+            finally:
+                self.job_running_lock.release()
         threading.Thread(target=task_thread, daemon=True).start()
 
     def _append_and_trim_log(self, task, log_block):
-        # Sanitize name for filename
-        safe_name = re.sub(r'[^\\w\-_]', '_', task.get('name', 'task'))
+        # Sanitize name for filename and convert to lowercase
+        safe_name = re.sub(r'[^\w\-_]', '_', task.get('name', 'task')).lower()
         log_file = f"{safe_name}.log"
         abs_log_file = os.path.abspath(log_file)
         print(f"[TaskRunner] Writing log to: {log_file} (absolute: {abs_log_file})")
@@ -448,7 +477,7 @@ class TaskRunner:
             return
         task = self.tasks[self.selected_task_index]
         # Find all log files that could match this task (by name or previous names)
-        safe_name = re.sub(r'[^\w\-_]', '_', task.get('name', 'task'))
+        safe_name = re.sub(r'[\w\-_]', '_', task.get('name', 'task')).lower()
         log_pattern = f"{safe_name}*.log"
         log_files = glob.glob(log_pattern)
         if not log_files:
@@ -480,17 +509,25 @@ class TaskRunner:
             log_win = tk.Toplevel(self.root)
             log_win.title(f"Log: {os.path.basename(log_file)}")
             log_win.geometry("700x500")
-            text = tk.Text(log_win, wrap="none", font=("Consolas", 10))
+
+            # Create a frame for proper layout
+            frame = ttk.Frame(log_win)
+            frame.pack(fill="both", expand=True)
+
+            text = tk.Text(frame, wrap="none", font=("Consolas", 10))
+            yscroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+            xscroll = ttk.Scrollbar(frame, orient="horizontal", command=text.xview)
+
+            text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+            text.grid(row=0, column=0, sticky="nsew")
+            yscroll.grid(row=0, column=1, sticky="ns")
+            xscroll.grid(row=1, column=0, sticky="ew")
+
+            frame.rowconfigure(0, weight=1)
+            frame.columnconfigure(0, weight=1)
+
             text.insert("1.0", content)
             text.config(state="disabled")
-            text.pack(fill="both", expand=True)
-            # Add scrollbars
-            yscroll = ttk.Scrollbar(log_win, orient="vertical", command=text.yview)
-            yscroll.pack(side="right", fill="y")
-            text.config(yscrollcommand=yscroll.set)
-            xscroll = ttk.Scrollbar(log_win, orient="horizontal", command=text.xview)
-            xscroll.pack(side="bottom", fill="x")
-            text.config(xscrollcommand=xscroll.set)
         except Exception as e:
             messagebox.showerror("Error", f"Could not open log file: {e}")
 
@@ -498,34 +535,62 @@ class TaskRunner:
         if self.selected_task_index is None:
             messagebox.showwarning("No Task Selected", "Please select a task to run.")
             return
-            
+        # Prevent manual run if a job is running
+        if self.job_running_lock.locked():
+            messagebox.showwarning("Job Running", "A task is already running. Please wait until it finishes.")
+            return
         task = self.tasks[self.selected_task_index]
-        file_path = task["file_path"]
-        
-        # Show progress bar
-        self.progress_bar.grid()
-        self.progress_var.set(0)
-        
         def run_task_with_progress():
+            self.job_running_lock.acquire()
             try:
-                if self.start_minimized_var.get():
-                    subprocess.Popen(["cmd", "/c", f'start /min cmd /k "{file_path}"'])
+                # Set last_execution to 'running...' and update UI
+                task['last_execution'] = 'running...'
+                self.update_task_list()
+                # Print a log message similar to scheduled run
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                next_run_str = task.get('next_run', '-')
+                print(f"[TaskRunner] [MANUAL] Checking task: {task.get('name')} next_run={next_run_str} now={now_str}")
+                # Store original working directory
+                original_dir = os.getcwd()
+                # Get the directory of the task file
+                task_dir = os.path.dirname(os.path.abspath(task['file_path']))
+                # Change to that directory
+                os.chdir(task_dir)
+                ext = os.path.splitext(task['file_path'])[1].lower()
+                if ext in ['.bat', '.cmd']:
+                    cmd = f"cmd /c \"{task['file_path']}\""
+                elif ext == '.py':
+                    cmd = f"python \"{task['file_path']}\""
                 else:
-                    subprocess.Popen(["cmd", "/k", file_path])
-                
-                # Simulate progress
-                for i in range(101):
-                    self.progress_var.set(i)
-                    time.sleep(0.05)
-                    self.root.update_idletasks()
-                
+                    cmd = f"\"{task['file_path']}\""
+                # Run and capture output
+                start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+                output, _ = proc.communicate()
+                # Restore original working directory before writing log
+                os.chdir(original_dir)
+                # Log block with task name and file path
+                log_block = (
+                    f"==== MANUAL EXECUTION {start_time} ====" + "\n"
+                    f"Task: {task.get('name', '')}\n"
+                    f"File: {task.get('file_path', '')}\n\n"
+                    + output + "\n"
+                )
+                self._append_and_trim_log(task, log_block)
+                # Update last_execution to completion time and update UI
+                task['last_execution'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.update_task_list()
             except Exception as e:
+                try:
+                    os.chdir(original_dir)
+                except:
+                    pass
+                task['last_execution'] = f'Error: {e}'
+                self.update_task_list()
                 messagebox.showerror("Error", f"Could not run task: {e}")
             finally:
-                # Hide progress bar after completion
-                self.progress_bar.grid_remove()
-        
-        # Run in separate thread to not block UI
+                self.job_running_lock.release()
+                self.save_tasks()
         threading.Thread(target=run_task_with_progress, daemon=True).start()
 
     def run(self):
