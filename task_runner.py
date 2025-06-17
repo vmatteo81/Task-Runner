@@ -477,7 +477,7 @@ class TaskRunner:
             return
         task = self.tasks[self.selected_task_index]
         # Find all log files that could match this task (by name or previous names)
-        safe_name = re.sub(r'[\w\-_]', '_', task.get('name', 'task')).lower()
+        safe_name = re.sub(r'[^\w\-_]', '_', task.get('name', 'task')).lower()
         log_pattern = f"{safe_name}*.log"
         log_files = glob.glob(log_pattern)
         if not log_files:
