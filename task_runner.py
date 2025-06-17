@@ -13,6 +13,8 @@ import subprocess
 import shutil
 import getpass
 from croniter import croniter
+import re
+import glob
 
 STARTUP_MARKER = '.task_runner_first_run'
 
@@ -91,66 +93,79 @@ class TaskRunner:
         # Task Configuration Frame
         file_frame = ttk.LabelFrame(self.root, text="Task Configuration", padding="15 10 15 10")
         file_frame.pack(fill="x", padx=15, pady=10)
+        file_frame.columnconfigure(1, weight=1)
 
-        # Script/File
+        # Name
         ttk.Label(file_frame, text="Name:", font=("Segoe UI", 11, "bold")).grid(row=0, column=0, sticky="w", pady=5, padx=5)
         self.name_var = tk.StringVar()
         name_entry = ttk.Entry(file_frame, textvariable=self.name_var, width=25)
-        name_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        name_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
         ToolTip(name_entry, "Name for this task (defaults to filename)")
 
+        # Script/File
         ttk.Label(file_frame, text="Script/File:", font=("Segoe UI", 11, "bold")).grid(row=1, column=0, sticky="w", pady=5, padx=5)
         self.file_path = tk.StringVar()
         file_entry = ttk.Entry(file_frame, textvariable=self.file_path, width=50)
-        file_entry.grid(row=1, column=1, padx=5, pady=5)
+        file_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
         browse_btn = ttk.Button(file_frame, text="Browse", command=self.browse_file)
-        browse_btn.grid(row=1, column=2, padx=5, pady=5)
+        browse_btn.grid(row=1, column=2, padx=5, pady=5, sticky="w")
         ToolTip(browse_btn, "Browse for a script or executable file to schedule.")
 
         # Cron Expression
         ttk.Label(file_frame, text="Cron Expression:", font=("Segoe UI", 11, "bold")).grid(row=2, column=0, sticky="w", pady=5, padx=5)
         self.cron_var = tk.StringVar(value="* * * * *")
-        cron_entry = ttk.Entry(file_frame, textvariable=self.cron_var, width=25)
-        cron_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        cron_entry = ttk.Entry(file_frame, textvariable=self.cron_var, width=15)
+        cron_entry.grid(row=2, column=1, sticky="w", padx=5, pady=5)
         ToolTip(cron_entry, "Enter a cron expression (min hour day month weekday)")
-        ttk.Label(file_frame, text="(min hour day month weekday)").grid(row=2, column=2, padx=5, sticky="w")
+        # Place crontab.guru link to the right of the input
         url_label = tk.Label(file_frame, text="crontab.guru", fg="blue", cursor="hand2", font=("Segoe UI", 11, "underline"))
-        url_label.grid(row=2, column=3, padx=10, sticky="w")
+        url_label.grid(row=2, column=2, sticky="w", padx=(8, 0))
         url_label.bind("<Button-1>", lambda e: self.open_crontab_guru())
         ToolTip(url_label, "Open crontab.guru to help build cron expressions.")
+        # Place the label below the cron input
+        ttk.Label(file_frame, text="(min hour day month weekday)").grid(row=3, column=1, padx=5, sticky="w")
 
-        # Log Retention
-        ttk.Label(file_frame, text="Log Retention (days):", font=("Segoe UI", 11, "bold")).grid(row=3, column=0, sticky="w", pady=5, padx=5)
+        # Log Retention and Log Executions on the same row
+        ttk.Label(file_frame, text="Log Retention (days):", font=("Segoe UI", 11, "bold")).grid(row=4, column=0, sticky="w", pady=5, padx=5)
         self.log_retention = tk.StringVar(value="1")
         retention_entry = ttk.Entry(file_frame, textvariable=self.log_retention, width=10)
-        retention_entry.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        retention_entry.grid(row=4, column=1, sticky="w", padx=(5, 20), pady=5)
         ToolTip(retention_entry, "How many days to keep logs for this task.")
 
-        # Log Executions to Keep
-        ttk.Label(file_frame, text="Log Executions to Keep:", font=("Segoe UI", 11, "bold")).grid(row=4, column=0, sticky="w", pady=5, padx=5)
+        ttk.Label(file_frame, text="Log Executions to Keep:", font=("Segoe UI", 11, "bold")).grid(row=4, column=2, sticky="w", pady=5, padx=5)
         self.log_executions = tk.StringVar(value="1")
         executions_entry = ttk.Entry(file_frame, textvariable=self.log_executions, width=10)
-        executions_entry.grid(row=4, column=1, sticky="w", padx=5, pady=5)
+        executions_entry.grid(row=4, column=3, sticky="w", padx=5, pady=5)
         ToolTip(executions_entry, "How many executions to keep in the log for this task.")
 
-        # Start Minimized Checkbox
-        self.start_minimized_var = tk.BooleanVar(value=False)
-        minimized_check = ttk.Checkbutton(file_frame, text="Start Minimized", variable=self.start_minimized_var)
-        minimized_check.grid(row=5, column=2, padx=5, sticky="w")
+        # Add progress bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(file_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=7, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        self.progress_bar.grid_remove()  # Hide initially
 
         # Save Task Button
         button_frame_top = ttk.Frame(file_frame)
-        button_frame_top.grid(row=5, column=1, pady=12, sticky="w")
-        add_btn = ttk.Button(button_frame_top, text="Save Task", command=self.add_or_update_task)
-        add_btn.pack(side="left", padx=(0, 8))
-        ToolTip(add_btn, "Save the configured task.")
+        button_frame_top.grid(row=8, column=0, columnspan=3, pady=12, sticky="w")
+        self.add_update_button = ttk.Button(button_frame_top, text="Save Task", command=self.add_or_update_task)
+        self.add_update_button.pack(side="left", padx=(0, 8))
+        ToolTip(self.add_update_button, "Save the configured task.")
         new_btn = ttk.Button(button_frame_top, text="New Task", command=self.clear_form)
         new_btn.pack(side="left", padx=(0, 8))
         ToolTip(new_btn, "Clear the form to add a new task.")
         self.run_btn = ttk.Button(button_frame_top, text="Run Task", command=self.run_selected_task)
-        self.run_btn.pack(side="left")
+        self.run_btn.pack(side="left", padx=(0, 8))
         ToolTip(self.run_btn, "Run the selected task immediately and show terminal output.")
-        self.run_btn.pack_forget()  # Hide by default
+        self.show_log_button = ttk.Button(button_frame_top, text="Show Log", command=self.show_log)
+        self.show_log_button.pack(side="left", padx=(0, 8))
+        ToolTip(self.show_log_button, "View the log file for the selected task.")
+        self.delete_btn = ttk.Button(button_frame_top, text="Delete Task", command=self.remove_task)
+        self.delete_btn.pack(side="left")
+        ToolTip(self.delete_btn, "Delete the selected task.")
+        # Initially hide action buttons
+        self.run_btn.pack_forget()
+        self.show_log_button.pack_forget()
+        self.delete_btn.pack_forget()
 
         # Scheduled Tasks Frame
         list_frame = ttk.LabelFrame(self.root, text="Scheduled Tasks", padding="10 10 10 10")
@@ -173,18 +188,6 @@ class TaskRunner:
         self.task_tree.tag_configure('evenrow', background='#ffffff')
         self.task_tree.bind("<<TreeviewSelect>>", self.on_tree_select)
 
-        # Remove Task Button
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(fill="x", padx=15, pady=(0, 15))
-        self.new_button = ttk.Button(button_frame, text="New Task", command=self.clear_form, width=15)
-        self.new_button.pack(side="left", padx=5)
-        self.add_update_button = ttk.Button(button_frame, text="Save Task", command=self.add_or_update_task, width=15)
-        self.add_update_button.pack(side="left", padx=5)
-        self.delete_button = ttk.Button(button_frame, text="Delete Task", command=self.remove_task, width=15)
-        self.delete_button.pack(side="left", padx=5)
-        ToolTip(self.new_button, "Clear the form to add a new task.")
-        ToolTip(self.add_update_button, "Save the task.")
-        ToolTip(self.delete_button, "Delete the selected task.")
         self.selected_task_index = None
 
         self.update_task_list()
@@ -270,8 +273,11 @@ class TaskRunner:
         self.selected_task_index = None
         self.add_update_button.config(text="Save Task")
         self.task_tree.selection_remove(self.task_tree.selection())
-        self.clearing_form = False
+        # Hide action buttons
         self.run_btn.pack_forget()
+        self.show_log_button.pack_forget()
+        self.delete_btn.pack_forget()
+        self.clearing_form = False
 
     def remove_task(self):
         selected = self.task_tree.selection()
@@ -369,10 +375,10 @@ class TaskRunner:
 
     def _append_and_trim_log(self, task, log_block):
         # Sanitize name for filename
-        import re
-        safe_name = re.sub(r'[^\w\-_]', '_', task.get('name', 'task'))
+        safe_name = re.sub(r'[^\\w\-_]', '_', task.get('name', 'task'))
         log_file = f"{safe_name}.log"
-        print(f"[TaskRunner] Writing log to: {log_file}")
+        abs_log_file = os.path.abspath(log_file)
+        print(f"[TaskRunner] Writing log to: {log_file} (absolute: {abs_log_file})")
         # Append new block
         with open(log_file, 'a', encoding='utf-8', errors='replace') as f:
             f.write(log_block)
@@ -418,7 +424,10 @@ class TaskRunner:
         self.log_executions.set(str(task.get("log_executions", 1)))
         self.selected_task_index = index
         self.add_update_button.config(text="Save Task")
-        self.run_btn.pack(side="left")
+        # Show action buttons
+        self.run_btn.pack(side="left", padx=(0, 8))
+        self.show_log_button.pack(side="left", padx=(0, 8))
+        self.delete_btn.pack(side="left")
 
     def get_next_execution(self, task):
         # Calculate next execution time based on cron expression
@@ -433,20 +442,91 @@ class TaskRunner:
         except Exception:
             return "-"
 
+    def show_log(self):
+        if self.selected_task_index is None:
+            messagebox.showwarning("No Task Selected", "Please select a task to view its log.")
+            return
+        task = self.tasks[self.selected_task_index]
+        # Find all log files that could match this task (by name or previous names)
+        safe_name = re.sub(r'[^\w\-_]', '_', task.get('name', 'task'))
+        log_pattern = f"{safe_name}*.log"
+        log_files = glob.glob(log_pattern)
+        if not log_files:
+            # Try to find any log file that contains the script filename
+            script_base = os.path.splitext(os.path.basename(task['file_path']))[0]
+            log_files = glob.glob(f"*{script_base}*.log")
+        if not log_files:
+            messagebox.showinfo("No Log", "No log file exists for this task yet.")
+            return
+        # If multiple logs, let user pick
+        log_file = log_files[0]
+        if len(log_files) > 1:
+            import tkinter.simpledialog
+            log_file = tkinter.simpledialog.askstring(
+                "Multiple Logs Found",
+                "Multiple log files found. Enter the number to view:\n" +
+                "\n".join(f"{i+1}: {os.path.basename(f)}" for i, f in enumerate(log_files)),
+                initialvalue="1"
+            )
+            try:
+                log_file = log_files[int(log_file)-1]
+            except Exception:
+                messagebox.showerror("Error", "Invalid selection.")
+                return
+        # Show log content in a popup window
+        try:
+            with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            log_win = tk.Toplevel(self.root)
+            log_win.title(f"Log: {os.path.basename(log_file)}")
+            log_win.geometry("700x500")
+            text = tk.Text(log_win, wrap="none", font=("Consolas", 10))
+            text.insert("1.0", content)
+            text.config(state="disabled")
+            text.pack(fill="both", expand=True)
+            # Add scrollbars
+            yscroll = ttk.Scrollbar(log_win, orient="vertical", command=text.yview)
+            yscroll.pack(side="right", fill="y")
+            text.config(yscrollcommand=yscroll.set)
+            xscroll = ttk.Scrollbar(log_win, orient="horizontal", command=text.xview)
+            xscroll.pack(side="bottom", fill="x")
+            text.config(xscrollcommand=xscroll.set)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open log file: {e}")
+
     def run_selected_task(self):
         if self.selected_task_index is None:
             messagebox.showwarning("No Task Selected", "Please select a task to run.")
             return
+            
         task = self.tasks[self.selected_task_index]
         file_path = task["file_path"]
-        try:
-            if self.start_minimized_var.get():
-                # Use 'start /min' to start minimized
-                subprocess.Popen(["cmd", "/c", f'start /min cmd /k "{file_path}"'])
-            else:
-                subprocess.Popen(["cmd", "/k", file_path])
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not run task: {e}")
+        
+        # Show progress bar
+        self.progress_bar.grid()
+        self.progress_var.set(0)
+        
+        def run_task_with_progress():
+            try:
+                if self.start_minimized_var.get():
+                    subprocess.Popen(["cmd", "/c", f'start /min cmd /k "{file_path}"'])
+                else:
+                    subprocess.Popen(["cmd", "/k", file_path])
+                
+                # Simulate progress
+                for i in range(101):
+                    self.progress_var.set(i)
+                    time.sleep(0.05)
+                    self.root.update_idletasks()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not run task: {e}")
+            finally:
+                # Hide progress bar after completion
+                self.progress_bar.grid_remove()
+        
+        # Run in separate thread to not block UI
+        threading.Thread(target=run_task_with_progress, daemon=True).start()
 
     def run(self):
         self.root.mainloop()

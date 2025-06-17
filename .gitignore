@@ -1,0 +1,4 @@
+# Task Runner runtime files
+.task_runner_first_run
+*.log
+tasks.json 
